@@ -1,0 +1,57 @@
+name: Automatically sync Infix
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * *'
+permissions:
+  contents: write
+
+jobs:
+  commit:
+    runs-on: [ self-hosted, latest ]
+    if: ${{ env.SYNC_INFIX }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.COMMIT_TOKEN }}
+          fetch-depth: 0
+          submodules: true
+
+      - name: Check for updates on infix and commit them
+        run: |
+          git config --global user.name 'Wires bot'
+          git config --global user.email 'noreply@wires.se'
+
+          CHANGES=0
+
+          if git ls-remote --heads origin latest | grep -q latest; then
+            echo "Latest exists, checking out"
+            git checkout latest
+            git submodule update --init --recursive
+          else
+            echo "Latest does not exist, create it"
+            git checkout -b latest
+          fi
+
+          cd infix
+          git checkout main
+          git pull origin main
+          cd ..
+
+          if [[ -n "$(git diff --exit-code infix)" ]]; then
+            git add infix
+            git commit infix -m "Step up infix"
+            CHANGES=1
+          fi
+
+          make defconfigs-generate
+          if [[ -n "$(git diff --exit-code configs)" ]]; then
+            git add configs
+            git commit configs/ -m "Update defconfigs"
+            CHANGES=1
+          fi
+
+          if [ $CHANGES -eq 1 ]; then
+            git push origin latest
+          fi

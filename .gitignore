@@ -1,0 +1,5 @@
+*~
+/.ccache
+/dl
+/output*
+/local.mk

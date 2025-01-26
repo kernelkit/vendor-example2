@@ -1,0 +1,110 @@
+name: Release General
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        required: false
+        type: string
+
+jobs:
+  build:
+    name: Building Vendor Example Reference Release ${{ github.ref_name }} [${{ matrix.platform }}]
+    runs-on: [self-hosted, release]
+    strategy:
+      matrix:
+        platform: [aarch64, x86_64]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+          submodules: recursive
+
+      - name: Set Release Variables
+        id: vars
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+              ver=${{ inputs.version }}
+          else
+              ver=${GITHUB_REF#refs/tags/v}
+          fi
+          echo "ver=${ver}" >> $GITHUB_OUTPUT
+          if echo $ver | grep -qE '[0-9.]+(-alpha|-beta|-rc)[0-9]*'; then
+            echo "pre=true"  >> $GITHUB_OUTPUT
+          else
+            echo "pre=false" >> $GITHUB_OUTPUT
+          fi
+          target=${{ matrix.target }}-${ver}
+          echo "dir=dcp-sc-28p-$target"        >> $GITHUB_OUTPUT
+          echo "tgz=dcp-sc-28p-$target.tar.gz" >> $GITHUB_OUTPUT
+
+      - name: Restore Cache of dl/
+        uses: actions/cache@v4
+        with:
+          path: dl/
+          key: dl-${{ matrix.platform }}-${{ hashFiles('.git/modules/infix/refs/heads/main', 'configs/*') }}
+          restore-keys: |
+            dl-${{ matrix.platform }}-
+            dl-
+
+      - name: Restore Cache of .ccache/
+        uses: actions/cache@v4
+        with:
+          path: .ccache/
+          key: ccache-${{ matrix.platform }}-${{ hashFiles('.git/modules/infix/refs/heads/main', 'configs/*') }}
+          restore-keys: |
+            ccache-${{ matrix.platform }}-
+            ccache-
+
+      - name: Configure & Build
+        env:
+          INFIX_RELEASE: ${{ steps.vars.outputs.ver }}
+        run: |
+          target=${{ matrix.platform }}_minimal_defconfig
+          echo "Buildring $target ..."
+          make $target
+          make
+
+      - name: Prepare Artifact
+        run: |
+          cd output
+          mv images ${{ steps.vars.outputs.dir }}
+          ln -s ${{ steps.vars.outputs.dir }} images
+          tar chfz ${{ steps.vars.outputs.tgz }} ${{ steps.vars.outputs.dir }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          path: output/${{ steps.vars.outputs.tgz }}
+          name: artifact-${{ matrix.platform }}
+
+  release:
+    name: Release Infix / Vendor Example ${{ github.ref_name }}
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "artifact-*"
+          merge-multiple: true
+      - name: Extract ChangeLog entry ...
+        run: |
+          awk '/-----*/{if (x == 1) exit; x=1;next}x' doc/ChangeLog.md \
+              |head -n -1 > release.md
+          cat release.md
+      - uses: ncipollo/release-action@v1
+        with:
+          name: Vendor example Reference Release ${{ github.ref_name }}
+          prerelease: ${{ needs.vars.outputs.pre }}
+          bodyFile:  release.md
+          artifacts: "*.tar.gz*"
+      - name: Summary
+        run: |
+          cat <<EOF >> $GITHUB_STEP_SUMMARY
+          For the public download links of this release, please see:
+          <https://github.com/kernelkit/vendor-example/releases/tag/${{ github.ref_name }}>
+          EOF
