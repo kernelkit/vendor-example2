@@ -1,21 +1,140 @@
 name: Bob the Builder
 
 on:
-  #pull_request:
-  #push:
-  #  branches:
-  #    - main
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  push:
+    branches:
+      - main
   workflow_dispatch:
+    inputs:
+      minimal:
+        description: 'Build minimal defconfigs'
+        required: false
+        default: true
+        type: boolean
 
 jobs:
   build:
-    if: ${{github.ref_name == 'main' && github.event_name == 'push'}} || github.event_name == 'workflow_dispatch'
-    name: Vendor example build [${{ matrix.platform }}]
-    runs-on: [self-hosted, latest]
+    name: Build Vendor example Infix ${{ matrix.target }}
+    runs-on: [ self-hosted, latest ]
     strategy:
       matrix:
-        platform: [aarch64, x86_64]
+        target: [aarch64, x86_64]
       fail-fast: false
+    outputs:
+      build_id: ${{ steps.vars.outputs.INFIX_BUILD_ID }}
+    steps:
+      - name: Cleanup Build Folder
+        run: |
+          ls -la ./
+          rm -rf ./* || true
+          rm -rf ./.??* || true
+          ls -la ./
+
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+          submodules: recursive
+
+      - name: Set Build Variables
+        id: vars
+        run: |
+          if [ -n "${{ github.event.pull_request.head.sha }}" ]; then
+              # Since PRs are built from an internally generated merge
+              # commit, reverse lookups of PRs and/or commits from
+              # image version information are cumbersome.  Therefore:
+              # explicitly set a build id that references both the PR
+              # and the commit.
+              printf "INFIX_BUILD_ID=pr%d.%.7s\n" \
+                  "${{ github.event.number }}" "${{ github.event.pull_request.head.sha }}" \
+                  | tee -a $GITHUB_OUTPUT $GITHUB_ENV
+          fi
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+              if [ "${{ github.event.inputs.minimal }}" == "true" ]; then
+                  flavor="_minimal"
+              fi
+          else
+              # Ensure 'release' job get the proper image when building main
+              if [ "$GITHUB_REF_NAME" != "main" ]; then
+                  flavor="_minimal"
+              else
+                  flavor=""
+              fi
+              if ${{ contains(github.event.pull_request.labels.*.name, 'ci:main') }}; then
+                  flavor=""
+              fi
+          fi
+          target=${{ matrix.target }}
+          echo "dir=vendor-example-$target"        >> $GITHUB_OUTPUT
+          echo "tgz=vendor-example-$target.tar.gz" >> $GITHUB_OUTPUT
+          echo "flv=$flavor"              >> $GITHUB_OUTPUT
+          echo "Building target ${target}${flavor}_defconfig"
+      - name: Restore Cache of dl/
+        uses: actions/cache@v4
+        with:
+          path: dl/
+          key: dl-${{ hashFiles('.git/modules/buildroot/HEAD', 'configs/*', 'package/*/*.hash') }}
+          restore-keys: |
+            dl-
+
+      - name: Restore Cache of .ccache/
+        uses: actions/cache@v4
+        with:
+          path: .ccache/
+          key: ccache-${{ matrix.target }}-${{ hashFiles('.git/modules/buildroot/HEAD', 'package/*/*.hash') }}
+          restore-keys: |
+            ccache-${{ matrix.target }}-
+            ccache-
+
+      - name: Configure ${{ matrix.target }}${{ steps.vars.outputs.flv }}
+        run: |
+          make ${{ matrix.target }}${{ steps.vars.outputs.flv }}_defconfig
+
+      - name: Unit Test ${{ matrix.target }}
+        run: |
+          make test-unit
+
+      - name: Build ${{ matrix.target }}${{ steps.vars.outputs.flv }}
+        run: |
+          echo "Building ${{ matrix.target }}${{ steps.vars.outputs.flv }}_defconfig ..."
+          make
+
+      - name:  Check SBOM from Build
+        run: |
+          make legal-info
+
+      - name: Build test specification
+        run: |
+          make test-spec
+
+      - name: Resulting size of build
+        run: |
+          printf "Size of complete tree : "
+          du -sh .
+          printf "Size of output/       : "
+          du -sh output
+          printf "Size of dl/           : "
+          du -sh dl
+          printf "Size of output/images/: "
+          ls -l output/images/
+
+      - name: Prepare ${{ matrix.target }} Artifact
+        run: |
+          cd output/
+          mv images ${{ steps.vars.outputs.dir }}
+          ln -s ${{ steps.vars.outputs.dir }} images
+          tar chfz ${{ steps.vars.outputs.tgz }} ${{ steps.vars.outputs.dir }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          path: output/${{ steps.vars.outputs.tgz }}
+          name: artifact-${{ matrix.target }}
+
+  test:
+    name: Regression Test of Vendor example Infix x86_64
+    needs: build
+    runs-on: [ self-hosted, regression ]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,58 +144,80 @@ jobs:
       - name: Set Build Variables
         id: vars
         run: |
-          target=${{ matrix.platform }}
-          echo "dir=vendor-example-$target"        >> $GITHUB_OUTPUT
-          echo "tgz=vendor-example-$target.tar.gz" >> $GITHUB_OUTPUT
+          if [ -n "${{ needs.build.outputs.build_id }}" ]; then
+              echo "INFIX_BUILD_ID=${{ needs.build.outputs.build_id }}" \
+                   >>$GITHUB_ENV
+          fi
 
-      - name: Restore Cache of dl/
-        uses: actions/cache@v4
-        with:
-          path: dl/
-          key: dl-${{ matrix.platform }}-${{ hashFiles('.git/modules/infix/refs/heads/main', 'configs/*') }}
-          restore-keys: |
-            dl-${{ matrix.platform }}-
-            dl-
+          if [ "$GITHUB_REF_NAME" != "main" ]; then
+              flavor="_minimal"
+          else
+              flavor=""
+          fi
+          echo "flv=$flavor"              >> $GITHUB_OUTPUT
 
-      - name: Restore Cache of .ccache/
-        uses: actions/cache@v4
-        with:
-          path: .ccache/
-          key: ccache-${{ matrix.platform }}-${{ hashFiles('.git/modules/infix/refs/heads/main', 'configs/*') }}
-          restore-keys: |
-            ccache-${{ matrix.platform }}-
-            ccache-
-
-      - name: Configure & Build
+      - name: Configure x86_64${{ steps.vars.outputs.flv }}
         run: |
-          target=${{ matrix.platform }}_vendor_example_defconfig
-          echo "Buildring $target ..."
-          make $target
-          make
+          make x86_64${{ steps.vars.outputs.flv }}_defconfig
 
-      - name: Prepare Artifact
-        run: |
-          cd output
-          mv images ${{ steps.vars.outputs.dir }}
-          ln -s ${{ steps.vars.outputs.dir }} images
-          tar chfz ${{ steps.vars.outputs.tgz }} ${{ steps.vars.outputs.dir }}
-
-      - uses: actions/upload-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          path: output/${{ steps.vars.outputs.tgz }}
-          name: artifact-${{ matrix.platform }}
+          pattern: "artifact-*"
+          merge-multiple: true
+
+      - name: Restore x86-64${{ steps.vars.outputs.flv }} output/
+        run: |
+          ls -l
+          mkdir -p output
+          mv vendor-example-x86_64.tar.gz output/
+          cd output/
+          tar xf vendor-example-x86_64.tar.gz
+          ln -s vendor-example-x86_64 images
+
+      - name: Regression Test x86_64${{ steps.vars.outputs.flv }}
+        run: |
+          make test
+
+      - name: Publish Test Result for x86_64${{ steps.vars.outputs.flv }}
+        # Ensure this runs even if Regression Test fails
+        if: always()
+        run: cat infix/test/.log/last/result-gh.md >> $GITHUB_STEP_SUMMARY
+
+      - name: Generate Test Report for x86_64${{ steps.vars.outputs.flv }}
+        # Ensure this runs even if Regression Test fails
+        if: always()
+        run: |
+          asciidoctor-pdf \
+          --theme infix/test/9pm/report/theme.yml \
+          -a pdf-fontsdir=infix/test/9pm/report/fonts \
+          infix/test/.log/last/report.adoc \
+          -o infix/test/.log/last/report.pdf
+
+      - name: Upload Test Report as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: infix/test/.log/last/report.pdf
 
   release:
-    if: github.repository == 'kernelkit/vendor-example' && github.ref == 'refs/heads/main'
-    permissions: write-all
+    if: ${{github.repository_owner == 'kernelkit' && github.ref_name == 'main'}}
     name: Upload Latest Build
-    needs: build
+    needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
           pattern: "artifact-*"
           merge-multiple: true
+
+      - name: Create checksums ...
+        run: |
+          for file in *.tar.gz; do
+              sha256sum $file > $file.sha256
+          done
+
       - uses: ncipollo/release-action@v1
         with:
           allowUpdates: true
@@ -86,12 +227,13 @@ jobs:
           prerelease: true
           tag: "latest"
           token: ${{ secrets.GITHUB_TOKEN }}
-          artifacts: "*.tar.gz"
+          artifacts: "*.tar.gz*"
+
       - name: Summary
         run: |
           cat <<EOF >> $GITHUB_STEP_SUMMARY
           # Latest Build Complete! :rocket:
-          
+
           For the public download links of these build artifacts, please see:
            <https://github.com/kernelkit/vendor-example/releases/tag/latest>
           EOF
