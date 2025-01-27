@@ -39,8 +39,8 @@ jobs:
             echo "pre=false" >> $GITHUB_OUTPUT
           fi
           target=${{ matrix.target }}-${ver}
-          echo "dir=dcp-sc-28p-$target"        >> $GITHUB_OUTPUT
-          echo "tgz=dcp-sc-28p-$target.tar.gz" >> $GITHUB_OUTPUT
+          echo "dir=vendor-example-$target"        >> $GITHUB_OUTPUT
+          echo "tgz=vendor-example-$target.tar.gz" >> $GITHUB_OUTPUT
 
       - name: Restore Cache of dl/
         uses: actions/cache@v4

@@ -1,42 +1,48 @@
 name: Automatically sync Infix
-
 on:
   workflow_dispatch:
   schedule:
     - cron: '0 2 * * *'
 permissions:
   contents: write
-
 jobs:
-  commit:
+  check_changes:
     runs-on: [ self-hosted, latest ]
-    if: ${{ env.SYNC_INFIX }}
+    if: ${{ vars.SYNC_INFIX }}
     steps:
       - uses: actions/checkout@v4
         with:
           token: ${{ secrets.COMMIT_TOKEN }}
           fetch-depth: 0
-          submodules: true
-
-      - name: Check for updates on infix and commit them
+          clean: true
+          submodules: recursive
+      - name: Check for updates and commit if needed
+        id: check_changes
         run: |
           git config --global user.name 'Wires bot'
           git config --global user.email 'noreply@wires.se'
-
           CHANGES=0
-
-          if git ls-remote --heads origin latest | grep -q latest; then
-            echo "Latest exists, checking out"
-            git checkout latest
-            git submodule update --init --recursive
+          if [ -z  "$(git branch | grep latest)" ]; then
+            if [ -n "$(git branch -r | grep latest)" ]; then
+              git checkout latest
+            else
+              git checkout -b latest
+            fi
           else
-            echo "Latest does not exist, create it"
-            git checkout -b latest
+            if [ -n "$(git branch -r | grep latest)" ]; then
+              git reset --hard origin/latest
+            fi
+          fi
+          if [[ -n "$(git diff --exit-code origin/main)" ]]; then
+            echo "New commits exist on main"
+            git merge origin/main
+            CHANGES=1
           fi
 
           cd infix
+          git clean -ffdx
           git checkout main
-          git pull origin main
+          git reset --hard origin/main
           cd ..
 
           if [[ -n "$(git diff --exit-code infix)" ]]; then
