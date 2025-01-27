@@ -10,7 +10,7 @@ permissions:
 jobs:
   commit:
     runs-on: [ self-hosted, latest ]
-    if: ${{ env.SYNC_INFIX }}
+    if: ${{ github.event.inputs.SYNC_INFIX }}
     steps:
       - uses: actions/checkout@v4
         with:
