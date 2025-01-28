@@ -188,10 +188,10 @@ jobs:
         if: always()
         run: |
           asciidoctor-pdf \
-          --theme test/9pm/report/theme.yml \
-          -a pdf-fontsdir=test/9pm/report/fonts \
-          test/.log/last/report.adoc \
-          -o test/.log/last/report.pdf
+          --theme infix/test/9pm/report/theme.yml \
+          -a pdf-fontsdir=infix/test/9pm/report/fonts \
+          infix/test/.log/last/report.adoc \
+          -o infix/test/.log/last/report.pdf
 
       - name: Upload Test Report as Artifact
         uses: actions/upload-artifact@v4
