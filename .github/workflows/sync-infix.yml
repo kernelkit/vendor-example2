@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   commit:
-    runs-on: [ self-hosted, latest ]
+    runs-on: [ ubuntu-latest ]
     if: ${{ vars.SYNC_INFIX }}
     steps:
       - uses: actions/checkout@v4
