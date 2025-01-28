@@ -181,7 +181,7 @@ jobs:
       - name: Publish Test Result for x86_64${{ steps.vars.outputs.flv }}
         # Ensure this runs even if Regression Test fails
         if: always()
-        run: cat test/.log/last/result-gh.md >> $GITHUB_STEP_SUMMARY
+        run: cat infix/test/.log/last/result-gh.md >> $GITHUB_STEP_SUMMARY
 
       - name: Generate Test Report for x86_64${{ steps.vars.outputs.flv }}
         # Ensure this runs even if Regression Test fails
@@ -197,7 +197,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-report
-          path: test/.log/last/report.pdf
+          path: infix/test/.log/last/report.pdf
 
   release:
     if: ${{github.repository_owner == 'kernelkit' && github.ref_name == 'main'}}
