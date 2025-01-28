@@ -28,6 +28,11 @@ jobs:
           if git ls-remote --heads origin latest | grep -q latest; then
             echo "Latest exists, checking out"
             git checkout latest
+            if [[ -n "$(git diff --exit-code origin/main)" ]]; then
+              echo "New commits exist on main"
+              git merge origin/main
+              CHANGES=1
+            endif
             git submodule update --init --recursive
           else
             echo "Latest does not exist, create it"
