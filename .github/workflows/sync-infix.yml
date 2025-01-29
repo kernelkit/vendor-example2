@@ -28,8 +28,11 @@ jobs:
             else
               git checkout -b latest
             fi
+          else
+            if [ -n "$(git branch -r | grep latest)" ]; then
+              git reset --hard origin/latest
+            fi
           fi
-          git reset --hard origin/latest
           if [[ -n "$(git diff --exit-code origin/main)" ]]; then
             echo "New commits exist on main"
             git merge origin/main
